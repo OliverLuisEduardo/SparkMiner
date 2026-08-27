@@ -1025,11 +1025,41 @@ void display_show_reset_complete() {
 
 bool display_touched() {
 #if defined(ESP32_2432S028)
-    if (s_touchInitialized) {
-        return s_touch.touched();
+    if (!s_touchInitialized) return false;
+
+    // Only report a NEW, real press. Guards against the auto-carousel bug:
+    // a floating IRQ / SPI noise makes touched() read true continuously, which
+    // otherwise cycled screens on every 1 Hz monitor tick.
+    // - z pressure threshold rejects electrical noise
+    // - rising-edge + debounce fires once per physical tap
+    static const int16_t TOUCH_Z_THRESHOLD = 400;  // min pressure for a real touch
+    static const uint32_t TOUCH_DEBOUNCE_MS = 400;
+    static bool s_wasTouched = false;
+    static uint32_t s_lastTouchMs = 0;
+
+    if (!s_touch.touched()) {
+        s_wasTouched = false;
+        return false;
     }
-#endif
+
+    TS_Point p = s_touch.getPoint();
+    if (p.z < TOUCH_Z_THRESHOLD) {
+        // No real pressure -> noise, not a touch
+        s_wasTouched = false;
+        return false;
+    }
+
+    uint32_t now = millis();
+    bool isNewPress = (!s_wasTouched) && (now - s_lastTouchMs > TOUCH_DEBOUNCE_MS);
+    s_wasTouched = true;
+    if (isNewPress) {
+        s_lastTouchMs = now;
+        return true;
+    }
     return false;
+#else
+    return false;
+#endif
 }
 
 void display_handle_touch() {

@@ -5,6 +5,8 @@
  * GPL v3 License
  */
 
+#if defined(USE_WEB_SERVER) && USE_WEB_SERVER
+
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
@@ -588,3 +590,5 @@ void web_server_stop() {
 bool web_server_is_running() {
     return s_running;
 }
+
+#endif // USE_WEB_SERVER

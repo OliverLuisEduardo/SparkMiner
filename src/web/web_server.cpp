@@ -314,6 +314,12 @@ static void handleApiConfigPost() {
             config->timezoneOffset = val; changed = true;
         }
     }
+    if (s_server.hasArg("screenTimeout")) {
+        int val = s_server.arg("screenTimeout").toInt();
+        if (val >= 0 && val <= 3600 && val != config->screenTimeout) {
+            config->screenTimeout = val; changed = true;  // applied live by monitor
+        }
+    }
     if (s_server.hasArg("newAdminPassword")) {
         String val = s_server.arg("newAdminPassword");
         if (val.length() <= 32 && val != config->adminPassword) {

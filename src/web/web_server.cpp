@@ -392,9 +392,10 @@ static void handleOtaDone() {
         return;
     }
     bool ok = !Update.hasError();
+    String msg = ok ? "OK: Firmware updated. Rebooting..."
+                    : (String("FAIL: ") + Update.errorString());
     s_server.sendHeader("Connection", "close");
-    s_server.send(ok ? 200 : 500, "text/plain",
-                  ok ? "OK: Firmware updated. Rebooting..." : "FAIL: OTA update failed.");
+    s_server.send(ok ? 200 : 500, "text/plain", msg);
     if (ok) {
         delay(150);
         ESP.restart();

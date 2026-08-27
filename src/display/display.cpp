@@ -15,7 +15,9 @@
 
 #include <SPI.h>
 #include <TFT_eSPI.h>
-// #include <XPT2046_Touchscreen.h>  // Touch disabled - see memory bank for issues
+#if defined(ESP32_2432S028)
+#include <XPT2046_Touchscreen.h>
+#endif
 
 // ============================================================
 // Configuration
@@ -89,11 +91,11 @@
 static TFT_eSPI s_tft = TFT_eSPI();
 static TFT_eSprite s_sprite = TFT_eSprite(&s_tft);
 
-// Touch controller disabled - see memory bank for implementation issues
-// #if defined(ESP32_2432S028)
-//     static SPIClass s_touchSpi = SPIClass(VSPI);
-//     static XPT2046_Touchscreen s_touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
-// #endif
+#if defined(ESP32_2432S028)
+static SPIClass s_touchSpi = SPIClass(VSPI);
+static XPT2046_Touchscreen s_touch(TOUCH_CS_PIN, TOUCH_IRQ_PIN);
+static bool s_touchInitialized = false;
+#endif
 
 static uint8_t s_currentScreen = SCREEN_MINING;
 static uint8_t s_brightness = 100;
@@ -563,7 +565,7 @@ static void drawStatsScreen(const display_data_t *data) {
         s_tft.print(String(data->btcPrice, 0));
     } else {
         s_tft.setTextColor(COLOR_DIM);
-        s_tft.print("Loading...");
+        s_tft.print("--");
     }
 
     // Block height on right
@@ -766,12 +768,14 @@ void display_init(uint8_t rotation, uint8_t brightness) {
     s_tft.setRotation(rotation);
     s_tft.fillScreen(COLOR_BG);
 
-    // Touch controller disabled - see memory bank for implementation issues
-    // #if defined(ESP32_2432S028)
-    //     s_touchSpi.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN);
-    //     s_touch.begin(s_touchSpi);
-    //     s_touch.setRotation(rotation);
-    // #endif
+    // Initialize XPT2046 touch controller on dedicated VSPI bus (CYD 2.8")
+    #if defined(ESP32_2432S028)
+        s_touchSpi.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN);
+        s_touch.begin(s_touchSpi);
+        s_touch.setRotation(rotation);
+        s_touchInitialized = true;
+        Serial.println("[DISPLAY] XPT2046 touch controller initialized on VSPI");
+    #endif
 
     // Initialize backlight PWM
     #ifdef LCD_BL_PIN
@@ -969,6 +973,11 @@ void display_set_rotation(uint8_t rotation) {
     if (rotation > 3) rotation = 0;
     s_rotation = rotation;
     s_tft.setRotation(s_rotation);
+    #if defined(ESP32_2432S028)
+    if (s_touchInitialized) {
+        s_touch.setRotation(s_rotation);
+    }
+    #endif
     s_tft.fillScreen(COLOR_BG);
     s_needsRedraw = true;
     Serial.printf("[DISPLAY] Rotation set to %d\n", s_rotation);
@@ -1015,13 +1024,15 @@ void display_show_reset_complete() {
 }
 
 bool display_touched() {
-    // Touch disabled - XPT2046 implementation had issues on CYD
-    // See memory bank for details on failed implementation attempts
+#if defined(ESP32_2432S028)
+    if (s_touchInitialized) {
+        return s_touch.touched();
+    }
+#endif
     return false;
 }
 
 void display_handle_touch() {
-    // Touch disabled - use button to cycle screens instead
     display_next_screen();
 }
 

@@ -34,6 +34,7 @@ extern "C" {
 #include "config/wifi_manager.h"
 #include "stats/monitor.h"
 #include "display/display.h"
+#include "web/web_server.h"
 
 // Task handles
 TaskHandle_t miner0Task = NULL;
@@ -413,8 +414,20 @@ void setup() {
         Serial.printf("[WIFI] Connected, channel: %d\n", WiFi.channel());
     }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        Serial.printf("[WIFI] Station IP: %s\n", WiFi.localIP().toString().c_str());
+        if (!web_server_is_running()) {
+            web_server_init();
+        }
+    }, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
     // Initialize monitor (live stats - display already initialized)
     monitor_init();
+
+    // Start Async Web Server if WiFi is already connected
+    if (WiFi.status() == WL_CONNECTED) {
+        web_server_init();
+    }
 
     Serial.println("[INIT] Setup complete");
 

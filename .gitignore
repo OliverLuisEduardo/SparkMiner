@@ -17,6 +17,9 @@ logs/
 docs/
 .claude/
 
+# Multi-agent scratch output
+.agents/
+
 # IDE
 .vscode/
 .idea/

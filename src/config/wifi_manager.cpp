@@ -28,6 +28,7 @@ static WiFiManagerParameter* s_paramBackupPoolUrl = NULL;
 static WiFiManagerParameter* s_paramBackupPoolPort = NULL;
 static WiFiManagerParameter* s_paramBackupWallet = NULL;
 static WiFiManagerParameter* s_paramBackupPoolPassword = NULL;
+static WiFiManagerParameter* s_paramAdminPassword = NULL;
 
 static WiFiManagerParameter* s_paramBrightness = NULL;
 static WiFiManagerParameter* s_paramDifficulty = NULL;
@@ -94,6 +95,10 @@ static void saveParamsCallback() {
     }
     if (s_paramBackupPoolPassword) {
         strncpy(config->backupPoolPassword, s_paramBackupPoolPassword->getValue(), MAX_PASSWORD_LEN);
+    }
+    if (s_paramAdminPassword) {
+        strncpy(config->adminPassword, s_paramAdminPassword->getValue(), 32);
+        config->adminPassword[32] = '\0';
     }
 
     // Display & Miner settings
@@ -203,6 +208,7 @@ void wifi_manager_init() {
     s_paramBackupPoolPort = new WiFiManagerParameter("bk_pool_port", "Backup Pool Port", s_bufBackupPort, 6);
     s_paramBackupWallet = new WiFiManagerParameter("bk_wallet", "Backup Wallet (optional)", config->backupWallet, MAX_WALLET_LEN);
     s_paramBackupPoolPassword = new WiFiManagerParameter("bk_pool_pass", "Backup Password", config->backupPoolPassword, MAX_PASSWORD_LEN);
+    s_paramAdminPassword = new WiFiManagerParameter("admin_pass", "Admin Password (optional, blank=open)", config->adminPassword, 32);
 
     // Brightness dropdown
     const int brightValues[] = {10, 25, 50, 75, 100};
@@ -430,6 +436,7 @@ void wifi_manager_init() {
     s_wm.addParameter(s_paramBackupPoolPort);
     s_wm.addParameter(s_paramBackupWallet);
     s_wm.addParameter(s_paramBackupPoolPassword);
+    s_wm.addParameter(s_paramAdminPassword);
 
     s_wm.addParameter(s_paramBrightness);
     s_wm.addParameter(s_paramScreenTimeout);

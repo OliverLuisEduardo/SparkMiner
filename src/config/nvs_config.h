@@ -54,6 +54,9 @@ typedef struct {
     char statsProxyUrl[128];    // HTTP proxy for stats APIs (supports auth)
     bool enableHttpsStats;      // Manual override for direct HTTPS (default: false)
 
+    // Security settings
+    char adminPassword[33];     // Admin password for web config/OTA (empty = auth disabled)
+
     // Checksum for validation
     uint32_t checksum;
 } miner_config_t;

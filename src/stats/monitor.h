@@ -25,4 +25,11 @@ void monitor_task(void *param);
  */
 void monitor_reset_activity();
 
+/**
+ * Get smoothed hashrate (exponential moving average over ~30s window)
+ * Thread-safe getter
+ * @return Smoothed hashrate in H/s
+ */
+double monitor_get_hashrate();
+
 #endif // MONITOR_H

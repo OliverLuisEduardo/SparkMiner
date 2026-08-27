@@ -11,6 +11,7 @@
 #include <utility>  // For std::swap
 #include <board_config.h>
 #include "stratum.h"
+#include "network_calc.h"
 #include "../mining/miner.h"
 
 // ============================================================ 
@@ -27,6 +28,12 @@
 static QueueHandle_t s_submitQueue = NULL;
 static submit_entry_t s_pendingResponses[MAX_PENDING_SUBMISSIONS];
 static uint16_t s_pendingIndex = 0;
+
+// Static cached network information derived from stratum jobs
+static uint32_t s_blockHeight = 0;
+static double s_networkDifficulty = 0.0;
+static bool s_networkInfoValid = false;
+static portMUX_TYPE s_networkMux = portMUX_INITIALIZER_UNLOCKED;
 
 static pool_config_t s_primaryPool;
 static pool_config_t s_backupPool;
@@ -238,6 +245,22 @@ static void parseMiningNotify(const String &line) {
     job.cleanJobs = params[8] | false;
     strncpy(job.extraNonce1, s_extraNonce1, STRATUM_EXTRANONCE_LEN - 1);
     job.extraNonce2Size = s_extraNonce2Size;
+
+    // Calculate and cache network information from job
+    uint32_t parsedHeight = coinbase_to_block_height(job.coinBase1);
+    double parsedDiff = nbits_to_difficulty(job.nbits);
+
+    portENTER_CRITICAL(&s_networkMux);
+    if (parsedHeight > 0) {
+        s_blockHeight = parsedHeight;
+    }
+    if (parsedDiff > 0.0) {
+        s_networkDifficulty = parsedDiff;
+    }
+    if (s_blockHeight > 0 || s_networkDifficulty > 0.0) {
+        s_networkInfoValid = true;
+    }
+    portEXIT_CRITICAL(&s_networkMux);
 
     s_lastActivity = millis();
     miner_start_job(&job);
@@ -501,6 +524,13 @@ static void submitShare(WiFiClient &client, const submit_entry_t *entry) {
 // ============================================================ 
 
 void stratum_init() {
+    // Initialize network info cache
+    portENTER_CRITICAL(&s_networkMux);
+    s_blockHeight = 0;
+    s_networkDifficulty = 0.0;
+    s_networkInfoValid = false;
+    portEXIT_CRITICAL(&s_networkMux);
+
     // Create submission queue
     s_submitQueue = xQueueCreate(MAX_PENDING_SUBMISSIONS, sizeof(submit_entry_t));
 
@@ -736,4 +766,21 @@ void stratum_set_backup_pool(const char *url, int port, const char *wallet, cons
         s_backupPool.workerName[0] = '\0';
     }
     s_hasBackupPool = (url[0] && port > 0 && wallet[0]);
+}
+
+bool stratum_get_network_info(uint32_t *height, double *difficulty) {
+    portENTER_CRITICAL(&s_networkMux);
+    uint32_t h = s_blockHeight;
+    double d = s_networkDifficulty;
+    bool valid = s_networkInfoValid;
+    portEXIT_CRITICAL(&s_networkMux);
+
+    if (height != nullptr) {
+        *height = h;
+    }
+    if (difficulty != nullptr) {
+        *difficulty = d;
+    }
+
+    return valid;
 }

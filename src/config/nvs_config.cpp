@@ -277,6 +277,11 @@ static bool loadConfigFromFile(miner_config_t *config) {
         config->enableHttpsStats = doc["enable_https_stats"];
     }
 
+    // Security settings (optional)
+    if (doc.containsKey("admin_password")) {
+        safeStrCpy(config->adminPassword, doc["admin_password"], sizeof(config->adminPassword));
+    }
+
     // Config file stays on SD card - NOT deleted
     // It will only be read again if NVS is reset/cleared
 
@@ -467,6 +472,33 @@ void nvs_config_init() {
     s_initialized = true;
 }
 
+// Legacy configuration layout without adminPassword (for backward compatibility migration)
+typedef struct {
+    char ssid[MAX_SSID_LENGTH + 1];
+    char wifiPassword[MAX_PASSWORD_LEN + 1];
+    char poolUrl[MAX_POOL_URL_LEN + 1];
+    uint16_t poolPort;
+    char wallet[MAX_WALLET_LEN + 1];
+    char poolPassword[MAX_PASSWORD_LEN + 1];
+    char backupPoolUrl[MAX_POOL_URL_LEN + 1];
+    uint16_t backupPoolPort;
+    char backupWallet[MAX_WALLET_LEN + 1];
+    char backupPoolPassword[MAX_PASSWORD_LEN + 1];
+    uint8_t brightness;
+    uint16_t screenTimeout;
+    uint8_t rotation;
+    bool displayEnabled;
+    bool invertColors;
+    int8_t timezoneOffset;
+    char workerName[32];
+    double targetDifficulty;
+    bool statsEnabled;
+    char statsApiUrl[128];
+    char statsProxyUrl[128];
+    bool enableHttpsStats;
+    uint32_t checksum;
+} legacy_miner_config_t;
+
 bool nvs_config_load(miner_config_t *config) {
     Serial.printf("[NVS] Loading config (struct size: %d bytes)\n", sizeof(miner_config_t));
 
@@ -482,40 +514,86 @@ bool nvs_config_load(miner_config_t *config) {
         return false;
     }
 
-    if (len != sizeof(miner_config_t)) {
-        Serial.printf("[NVS] Config size mismatch: stored=%d, expected=%d\n", len, sizeof(miner_config_t));
-        Serial.println("[NVS] Struct size changed - clearing old config");
-        // Clear the old incompatible config
+    // 1. Current struct size match
+    if (len == sizeof(miner_config_t)) {
+        size_t read = s_prefs.getBytes(NVS_KEY_CONFIG, config, sizeof(miner_config_t));
         s_prefs.end();
-        if (s_prefs.begin(NVS_NAMESPACE, false)) {
-            s_prefs.remove(NVS_KEY_CONFIG);
-            s_prefs.end();
+
+        if (read != sizeof(miner_config_t)) {
+            Serial.printf("[NVS] Failed to read config: read=%d, expected=%d\n", read, sizeof(miner_config_t));
+            return false;
         }
-        return false;
+
+        // Verify checksum
+        uint32_t expected = calculateChecksum(config);
+        if (config->checksum != expected) {
+            Serial.printf("[NVS] Checksum mismatch: stored=%08x, calculated=%08x\n", config->checksum, expected);
+            nvs_config_reset(config);
+            return false;
+        }
+
+        Serial.printf("[NVS] Config loaded: wallet=%s, pool=%s:%d\n",
+                      config->wallet[0] ? config->wallet : "(empty)",
+                      config->poolUrl,
+                      config->poolPort);
+        return true;
     }
 
-    size_t read = s_prefs.getBytes(NVS_KEY_CONFIG, config, sizeof(miner_config_t));
+    // 2. Backward-compatible migration from legacy struct
+    if (len == sizeof(legacy_miner_config_t)) {
+        Serial.printf("[NVS] Legacy config format detected (%d bytes). Migrating...\n", len);
+        legacy_miner_config_t legacy;
+        size_t read = s_prefs.getBytes(NVS_KEY_CONFIG, &legacy, sizeof(legacy_miner_config_t));
+        s_prefs.end();
+
+        if (read == sizeof(legacy_miner_config_t)) {
+            const uint8_t *data = (const uint8_t *)&legacy;
+            uint32_t sum = CONFIG_MAGIC;
+            size_t legacyLen = sizeof(legacy_miner_config_t) - sizeof(uint32_t);
+            for (size_t i = 0; i < legacyLen; i++) {
+                sum = sum * 31 + data[i];
+            }
+
+            if (legacy.checksum == sum) {
+                nvs_config_reset(config);
+                memcpy(config->ssid, legacy.ssid, sizeof(config->ssid));
+                memcpy(config->wifiPassword, legacy.wifiPassword, sizeof(config->wifiPassword));
+                memcpy(config->poolUrl, legacy.poolUrl, sizeof(config->poolUrl));
+                config->poolPort = legacy.poolPort;
+                memcpy(config->wallet, legacy.wallet, sizeof(config->wallet));
+                memcpy(config->poolPassword, legacy.poolPassword, sizeof(config->poolPassword));
+                memcpy(config->backupPoolUrl, legacy.backupPoolUrl, sizeof(config->backupPoolUrl));
+                config->backupPoolPort = legacy.backupPoolPort;
+                memcpy(config->backupWallet, legacy.backupWallet, sizeof(config->backupWallet));
+                memcpy(config->backupPoolPassword, legacy.backupPoolPassword, sizeof(config->backupPoolPassword));
+                config->brightness = legacy.brightness;
+                config->screenTimeout = legacy.screenTimeout;
+                config->rotation = legacy.rotation;
+                config->displayEnabled = legacy.displayEnabled;
+                config->invertColors = legacy.invertColors;
+                config->timezoneOffset = legacy.timezoneOffset;
+                memcpy(config->workerName, legacy.workerName, sizeof(config->workerName));
+                config->targetDifficulty = legacy.targetDifficulty;
+                config->statsEnabled = legacy.statsEnabled;
+                memcpy(config->statsApiUrl, legacy.statsApiUrl, sizeof(config->statsApiUrl));
+                memcpy(config->statsProxyUrl, legacy.statsProxyUrl, sizeof(config->statsProxyUrl));
+                config->enableHttpsStats = legacy.enableHttpsStats;
+                config->adminPassword[0] = '\0'; // Default: auth disabled
+
+                Serial.println("[NVS] Migrated legacy config successfully. Saving new format...");
+                nvs_config_save(config);
+                return true;
+            } else {
+                Serial.printf("[NVS] Legacy checksum mismatch: stored=%08x, calculated=%08x\n", legacy.checksum, sum);
+            }
+        }
+    }
+
+    // 3. Fallback for unrecognized config size
+    Serial.printf("[NVS] Unrecognized config size: stored=%d, expected=%d or %d\n",
+                  len, sizeof(miner_config_t), sizeof(legacy_miner_config_t));
     s_prefs.end();
-
-    if (read != sizeof(miner_config_t)) {
-        Serial.printf("[NVS] Failed to read config: read=%d, expected=%d\n", read, sizeof(miner_config_t));
-        return false;
-    }
-
-    // Verify checksum
-    uint32_t expected = calculateChecksum(config);
-    if (config->checksum != expected) {
-        Serial.printf("[NVS] Checksum mismatch: stored=%08x, calculated=%08x\n", config->checksum, expected);
-        // CRITICAL: Reset config to prevent stale data from being used
-        nvs_config_reset(config);
-        return false;
-    }
-
-    Serial.printf("[NVS] Config loaded: wallet=%s, pool=%s:%d\n",
-                  config->wallet[0] ? config->wallet : "(empty)",
-                  config->poolUrl,
-                  config->poolPort);
-    return true;
+    return false;
 }
 
 bool nvs_config_save(const miner_config_t *config) {
@@ -585,6 +663,9 @@ void nvs_config_reset(miner_config_t *config) {
     config->statsApiUrl[0] = '\0';    // No custom API endpoint
     config->statsProxyUrl[0] = '\0';  // No proxy by default
     config->enableHttpsStats = false; // Direct HTTPS disabled (causes WDT crashes)
+
+    // Security defaults (empty = auth disabled)
+    config->adminPassword[0] = '\0';
 
     config->checksum = 0;  // Will be calculated on save
 }

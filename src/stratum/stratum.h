@@ -70,4 +70,14 @@ void stratum_set_pool(const char *url, int port, const char *wallet, const char 
  */
 void stratum_set_backup_pool(const char *url, int port, const char *wallet, const char *password, const char *workerName = NULL);
 
+/**
+ * Get current network info derived from latest Stratum job
+ * Thread-safe: can be called from any task/core
+ *
+ * @param height Pointer to receive block height (can be NULL if not needed)
+ * @param difficulty Pointer to receive network difficulty (can be NULL if not needed)
+ * @return true if network info is valid and available, false if no job received yet
+ */
+bool stratum_get_network_info(uint32_t *height, double *difficulty);
+
 #endif // STRATUM_H

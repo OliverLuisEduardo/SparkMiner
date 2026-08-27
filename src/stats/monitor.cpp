@@ -40,6 +40,10 @@ static uint32_t s_sessionStartAccepted = 0;
 static uint32_t s_sessionStartRejected = 0;
 static uint32_t s_sessionStartBlocks = 0;
 
+// Smoothed hashrate state
+static volatile double s_hashRate = 0.0;
+static portMUX_TYPE s_hashRateMux = portMUX_INITIALIZER_UNLOCKED;
+
 // ============================================================
 // Helper Functions
 // ============================================================
@@ -92,10 +96,15 @@ static void updateDisplayData(display_data_t *data) {
             smoothedHashRate = alpha * instantRate + (1.0 - alpha) * smoothedHashRate;
         }
 
-        data->hashRate = smoothedHashRate;
+        portENTER_CRITICAL(&s_hashRateMux);
+        s_hashRate = smoothedHashRate;
+        portEXIT_CRITICAL(&s_hashRateMux);
+
         lastHashes = mstats->hashes;
         lastHashTime = now;
     }
+
+    data->hashRate = monitor_get_hashrate();
 
     // Pool info
     data->poolConnected = stratum_is_connected();
@@ -108,6 +117,27 @@ static void updateDisplayData(display_data_t *data) {
     data->wifiConnected = (WiFi.status() == WL_CONNECTED);
     data->wifiRssi = data->wifiConnected ? WiFi.RSSI() : 0;
     data->ipAddress = wifi_manager_get_ip();
+
+    // Stratum job network info (derived locally without HTTP)
+    uint32_t stratumHeight = 0;
+    double stratumDiff = 0.0;
+    stratum_get_network_info(&stratumHeight, &stratumDiff);
+
+    if (stratumHeight > 0) {
+        data->blockHeight = stratumHeight;
+    }
+
+    if (stratumDiff > 0.0) {
+        if (stratumDiff >= 1e12) {
+            snprintf(data->networkDifficulty, sizeof(data->networkDifficulty), "%.2f T", stratumDiff / 1e12);
+        } else if (stratumDiff >= 1e9) {
+            snprintf(data->networkDifficulty, sizeof(data->networkDifficulty), "%.2f G", stratumDiff / 1e9);
+        } else if (stratumDiff >= 1e6) {
+            snprintf(data->networkDifficulty, sizeof(data->networkDifficulty), "%.2f M", stratumDiff / 1e6);
+        } else {
+            snprintf(data->networkDifficulty, sizeof(data->networkDifficulty), "%.2f", stratumDiff);
+        }
+    }
 
     // Live stats (thread-safe copy)
     live_stats_t lstats;
@@ -207,6 +237,14 @@ void monitor_reset_activity() {
     s_lastActivityTime = millis();
 }
 
+double monitor_get_hashrate() {
+    double rate;
+    portENTER_CRITICAL(&s_hashRateMux);
+    rate = s_hashRate;
+    portEXIT_CRITICAL(&s_hashRateMux);
+    return rate;
+}
+
 void monitor_task(void *param) {
     Serial.printf("[MONITOR] Task started on core %d\n", xPortGetCoreID());
 
@@ -226,17 +264,28 @@ void monitor_task(void *param) {
             s_lastStatsUpdate = now;
         }
 
+        // Poll touch input on Core 0 (non-blocking 100ms cycle with 400ms debounce)
+        #if (USE_DISPLAY || USE_OLED_DISPLAY || USE_EINK_DISPLAY)
+        static uint32_t s_lastTouchPollTime = 0;
+        if (display_touched()) {
+            if (now - s_lastTouchPollTime >= 400) {
+                s_lastTouchPollTime = now;
+                monitor_reset_activity();
+                if (display_is_backlight_off()) {
+                    display_set_backlight_on();
+                } else {
+                    display_handle_touch();
+                }
+            }
+        }
+        #endif
+
         // Update display
         if (now - s_lastDisplayUpdate >= DISPLAY_UPDATE_MS) {
             updateDisplayData(&displayData);
 
             #if (USE_DISPLAY || USE_OLED_DISPLAY || USE_EINK_DISPLAY)
                 display_update(&displayData);
-
-                // Check for touch input
-                if (display_touched()) {
-                    display_handle_touch();
-                }
 
                 // Screen timeout check
                 {
